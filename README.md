@@ -208,7 +208,7 @@ The SQL is published; the data is not. Business targets, customer records and in
 
 ## Author
 
-**Victor Sernaque** — Commercial Analyst at a hotel chain in Peru, moving toward analytics engineering. Built and owns this warehouse end to end: modelling, pipeline, reporting layer, and the Power BI dashboards on top of it.
+**Victor Sernaque** — Commercial Analyst at a hotel chain in Peru, focused on business analysis and systems redesign. Built and owns this warehouse end to end: dimensional modelling, ETL pipeline, and the reporting layer.
 
 [LinkedIn](https://linkedin.com/in/victor-moises-sernaque-carrasco)
 
