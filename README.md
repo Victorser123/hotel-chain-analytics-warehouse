@@ -101,47 +101,92 @@ The natural unique key `(booking, year, date, room)` is violated by legitimate s
 
 Non-lodging SKUs — event boxes, entrance tickets, zones — were originally excluded by a hardcoded 15-item `NOT IN` list copy-pasted into every occupancy view. Adding one SKU meant editing all of them. `dim_tipo_habitacion` categorises them once; the views filter on the category.
 
+### Always joining on the whole composite key
+
+The corollary of the composite primary key, and the easiest thing in this schema to get wrong. `reservas_detalle` carries a composite foreign key, so a join written as
+
+```sql
+JOIN reservas_detalle rd ON r.id_reserva_origen = rd.id_reserva_origen
+```
+
+cross-multiplies every recycled booking against the detail rows of its namesakes in other years. Nothing errors; revenue simply inflates, and it inflates most in the multi-year comparisons where the recycling is densest. Both key columns, every time.
+
 ### Joining on IDs, never on names
 
 The source system exports the same sales agent under several accent-corrupted spellings. `dim_asesor` is keyed on the source user ID, and every join uses it. A name-based join fragments one person into several rows and quietly understates their performance.
 
-### Functional indexes on the staging layer
+### Functional indexes on the staging layer, and why they need a wrapper
 
-Bronze stores dates as text in `DD/MM/YYYY` to stay a faithful mirror of the untyped source. The incremental delete filters on `TO_DATE("FECHA", ...)`, and a plain index on the text column is not usable for that predicate — the index has to be built on the same expression the planner sees.
+Bronze stores dates as text in `DD/MM/YYYY` to stay a faithful mirror of the untyped source. The incremental delete filters on the parsed date, and a plain index on the text column is not usable for that predicate — the index has to be built on the same expression the planner sees.
+
+Indexing `TO_DATE()` directly does not work either:
+
+```
+ERROR: functions in index expression must be marked IMMUTABLE
+```
+
+`TO_DATE()` is only `STABLE`, because for some format masks its result depends on session settings. `'DD/MM/YYYY'` has no such dependence, so `f_fecha()` wraps that single call and is declared `IMMUTABLE`. The delete predicate calls the same wrapper — an expression index is only usable when the query spells the expression exactly the way the index was built. `EXPLAIN` on the delete now reports an Index Scan with `Index Cond: (f_fecha("FECHA") >= ... AND f_fecha("FECHA") <= ...)`.
 
 ---
 
 ## Repository structure
 
+Laid out by medallion layer, so a file's position states which layer it belongs to.
+
 ```
 hotel-chain-analytics-warehouse/
-├── schema/
-│   ├── 01_dimensions.sql          Date, channel, agent, room-type dimensions
-│   ├── 02_core_tables.sql         Fact tables, composite keys, target tables
-│   ├── 03_indexes.sql             Index strategy with per-index rationale
-│   └── 04_etl_pipeline.sql        Bronze→Silver→Gold functions + audit log
-├── views/
-│   ├── 01_occupancy_views.sql     Stay-date reporting
-│   ├── 02_production_views.sql    Sale-date reporting and agent ranking
-│   └── 03_data_quality_views.sql  10 automated health checks
+├── sql/
+│   ├── bronze/
+│   │   ├── 01_landing_table.sql       Landing table + immutable date parser
+│   │   ├── 02_indexes.sql             Expression indexes for the reload window
+│   │   └── 03_delete_rango.sql        delete_bronze_rango()
+│   ├── silver/
+│   │   ├── 01_core_tables.sql         Fact and entity tables, composite key
+│   │   ├── 02_dimensions.sql          Dimension DDL + static loads
+│   │   ├── 03_indexes.sql             Index strategy with per-index rationale
+│   │   ├── 04_refresh_silver.sql      refresh_silver()
+│   │   └── 05_derived_dimensions.sql  Agent and room-type loads (post-pipeline)
+│   ├── gold/
+│   │   ├── 01_mv_cliente_metricas.sql Customer lifetime metrics
+│   │   ├── 02_fact_reservas.sql       Flat room-night fact for the BI layer
+│   │   ├── 03_occupancy_views.sql     Stay-date reporting
+│   │   ├── 04_production_views.sql    Sale-date reporting and agent ranking
+│   │   ├── 05_refresh_gold.sql        refresh_gold()
+│   │   └── 06_quality_views.sql       13 automated health checks
+│   └── ops/
+│       ├── etl_log.sql                Audit log written by every pipeline step
+│       └── grants_rls.sql             Role model, RLS, PII containment
 └── queries/
     ├── 01_daily_occupancy_pivot.sql
     ├── 02_yoy_multiyear_comparison.sql
-    ├── 03_customer_retention_cohort.sql
-    └── 04_agent_ranking_percentiles.sql
+    ├── 03_post_stay_survey_list.sql
+    ├── 04_property_vs_network_adr.sql
+    └── 05_repeat_guest_intervals.sql
 ```
 
 ### Execution order
 
-The dimensional layer has a genuine circular dependency: two dimensions derive their contents from loaded fact data, and the target tables reference both. The bootstrap is therefore two-phase:
+The dimensional layer has a genuine circular dependency: two dimensions derive their contents from loaded fact data. The bootstrap is therefore two-phase, with the derived loads isolated in their own file rather than mixed into the DDL:
 
-```
-1. schema/02_core_tables.sql     Fact and entity tables
-2. schema/01_dimensions.sql      DDL + static dimension loads
-3. schema/03_indexes.sql
-4. schema/04_etl_pipeline.sql    Functions, then first refresh_silver()
-5. schema/01_dimensions.sql      Derived dimension INSERTs + target tables
-6. views/                        Reporting layer
+```bash
+psql "$DB" -f sql/ops/etl_log.sql
+psql "$DB" -f sql/bronze/01_landing_table.sql
+psql "$DB" -f sql/bronze/02_indexes.sql
+psql "$DB" -f sql/bronze/03_delete_rango.sql
+psql "$DB" -f sql/silver/01_core_tables.sql
+psql "$DB" -f sql/silver/02_dimensions.sql
+psql "$DB" -f sql/silver/03_indexes.sql
+psql "$DB" -f sql/silver/04_refresh_silver.sql
+#   load the property master and the first bronze batch here
+psql "$DB" -c "SELECT * FROM refresh_silver(3.75);"
+psql "$DB" -f sql/silver/05_derived_dimensions.sql
+psql "$DB" -f sql/gold/01_mv_cliente_metricas.sql
+psql "$DB" -f sql/gold/02_fact_reservas.sql
+psql "$DB" -f sql/gold/03_occupancy_views.sql
+psql "$DB" -f sql/gold/04_production_views.sql
+psql "$DB" -f sql/gold/05_refresh_gold.sql
+psql "$DB" -f sql/gold/06_quality_views.sql
+psql "$DB" -f sql/ops/grants_rls.sql
 ```
 
 ---
@@ -152,10 +197,10 @@ Four functions, callable as RPC endpoints, run in sequence on every load:
 
 | Step | Function | What it does |
 |---|---|---|
-| 1 | `delete_bronze_rango(f_min, f_max)` | Clears the reload window from staging |
+| 1 | `delete_bronze_rango(f_min, f_max)` | Clears the reload window from staging, filtered on stay date |
 | 2 | *(external loader)* | Posts raw rows to bronze in batches |
-| 3 | `refresh_silver(tc_dolar)` | Deduplicates, normalises, converts currency, backfills aggregates |
-| 4 | `refresh_gold()` | Refreshes materialised views |
+| 3 | `refresh_silver(tc_dolar)` | Deduplicates, normalises currency, backfills header aggregates |
+| 4 | `refresh_gold()` | Refreshes `mv_cliente_metricas` and `fact_reservas` |
 
 Every function writes an `etl_log` row on entry and updates it on exit with row counts and elapsed seconds. The `EXCEPTION` block records `SQLERRM` before re-raising, so a failed load leaves a diagnosable trail rather than vanishing.
 
@@ -171,9 +216,11 @@ The exchange rate is a **parameter**, not a stored constant, so historical reloa
 
 ## Data quality monitoring
 
-`v_health_check` runs ten validations and returns a count plus a traffic-light status for each, so a single `SELECT` answers whether today's data can be trusted:
+`v_health_check` runs thirteen validations and returns a count plus a traffic-light status for each, so a single `SELECT` answers whether today's data can be trusted:
 
-referential integrity (orphaned bookings, orphaned detail rows, missing hotels) · value sanity (negative amounts, outlier totals, impossible date ranges) · dimension completeness (unenriched hotels, unclassified channels) · uniqueness (duplicate national IDs) · pipeline freshness (last load status and age)
+referential integrity (orphaned bookings, orphaned detail rows, missing hotels) · value sanity (negative amounts, outlier totals, impossible date ranges) · dimension completeness (unenriched hotels, plus channels, agents and room types present in the data and absent from their dimension) · uniqueness (duplicate national IDs) · load integrity (Bronze-to-Silver row reconciliation) · pipeline freshness (last load status and age)
+
+Checks are written against the *fact* tables, not the dimensions. An earlier version counted `dim_canal` rows flagged unclassified — but that dimension loads from a fixed seed list in which no row carries that value, so the count was structurally always zero and the check could never fire. What has to be detected is a value present in the data and missing from the dimension.
 
 Thresholds are set per check rather than globally. An orphaned record is critical at any count because it means referential integrity broke. A hotel without a city is a warning — a new property simply has not been enriched yet.
 
@@ -187,8 +234,9 @@ Thresholds are set per check rather than globally. An orphaned record is critica
 |---|---|---|
 | `01_daily_occupancy_pivot` | Today's occupancy and revenue at every property, side by side | Conditional aggregation with `FILTER (WHERE)`, aggregate-safe dimension carry with `MAX()` |
 | `02_yoy_multiyear_comparison` | How does this month compare against the same month in prior years? | Multi-year conditional pivot, null-safe growth rate |
-| `03_customer_retention_cohort` | Which properties keep their guests, and which keep replacing them? | Flag-by-entity-period pattern, cohort counting, correct retention denominator |
-| `04_agent_ranking_percentiles` | How does each agent compare against the peers they should be compared against? | `ROW_NUMBER`, `NTILE`, `AVG OVER`, `LAG`, CTE for post-window filtering |
+| `03_post_stay_survey_list` | Which guests just checked out, and what is a usable number for each? | `DISTINCT ON` for one row per guest, regex phone normalisation, `split_part` name extraction |
+| `04_property_vs_network_adr` | How does each property's nightly rate compare against the chain? | Uncorrelated scalar subquery as an explicit denominator |
+| `05_repeat_guest_intervals` | Among guests who came back, how far apart are their stays? | Self-join on ordered stays, `ROW_NUMBER` and `COUNT(*) OVER`, post-window filtering |
 
 Seasonality in this chain is pronounced, which is why the multi-year query compares like month against like month rather than against the previous month.
 
@@ -202,7 +250,9 @@ PostgreSQL 15 on Supabase · PL/pgSQL for the pipeline · PostgREST for RPC invo
 
 ## Notes
 
-The SQL is published; the data is not. Business targets, customer records and internal identifiers have been excluded or replaced. Numeric IDs appearing in query filters are internal keys with no external meaning.
+The SQL is published; the data is not. Business targets, customer records and the operator's name have been excluded or replaced. Numeric IDs appearing in query filters are internal keys with no external meaning.
+
+Two things a reader should know before running this against real data: the landing table is created by the loader rather than by a migration, so its DDL here is reconstructed from how every column is consumed and should be checked against `information_schema`; and `hoteles` has to be populated by hand, because `cantidad_hab` is the denominator of every occupancy figure and exists nowhere in the source system.
 
 ---
 
