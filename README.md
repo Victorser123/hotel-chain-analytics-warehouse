@@ -266,4 +266,6 @@ Two things a reader should know before running this against real data: the landi
 
 ## License
 
-MIT — free to reference for learning purposes.
+Copyright © 2026 Victor Sernaque. All rights reserved.
+
+This repository is published as a portfolio piece. The code is available to read and review for evaluation purposes. It is not licensed for reuse, modification, redistribution or commercial use,in whole or in part, without prior written permission.
