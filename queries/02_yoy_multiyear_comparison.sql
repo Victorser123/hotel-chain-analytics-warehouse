@@ -32,7 +32,8 @@
 ================================================================================
 */
 
-
+SELECT
+    r.hotel_id,
     SUM(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2022 THEN rdh.total ELSE 0 END) AS sum_2022,
     COUNT(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2022 THEN 1 END) AS count_2022,
 
