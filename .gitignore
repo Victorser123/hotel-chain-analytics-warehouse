@@ -1,0 +1,22 @@
+# Credenciales
+.env
+.env.*
+*.pgpass
+supabase/.temp/
+
+# Volcados y exports con datos reales
+*.dump
+*.backup
+*.csv
+*.xlsx
+*.xlsb
+
+# Loader
+~$*
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,111 +1,134 @@
 /*
-================================================================
-DAILY OCCUPANCY — PIVOTED BY PROPERTY
-================================================================
-AUTHOR: Victor Sernaque
+================================================================================
+ DAILY OCCUPANCY — PIVOTED BY PROPERTY
+================================================================================
+ BUSINESS QUESTION
+   What is today's occupancy rate and revenue at each property, side by side,
+   for the current month?
 
-BUSINESS QUESTION:
-  What is today's occupancy rate and revenue at each property,
-  side by side, for the current month?
+ USE CASE
+   Daily operations stand-up. One row per date, one column block per property —
+   the shape managers already read in their spreadsheets, so adoption needed no
+   retraining.
 
-USE CASE:
-  Daily operations stand-up. One row per date, one column block per
-  property — the shape managers already read in their spreadsheets,
-  so adoption required no retraining.
+ WHY PIVOTED
+   The long format (one row per hotel per day) is the correct relational shape
+   but forces the reader to scan seven rows to compare properties on a given
+   date. FILTER (WHERE) collapses it to one row per date and makes the
+   comparison a horizontal read.
 
-WHY PIVOTED:
-  The long-format version (one row per hotel per day) is the correct
-  relational shape but forces the reader to scan 7 rows to compare
-  properties on a given date. FILTER (WHERE) collapses it to one row
-  per date, making cross-property comparison a horizontal read.
+   Trade-off accepted deliberately: adding a property means adding a column
+   block. At seven properties that is manageable; at fifty, long format plus a
+   BI-layer pivot would be the right call.
 
-  Trade-off accepted deliberately: adding a property means adding a
-  column block. At 7 properties that is manageable; at 50 the long
-  format plus a BI-layer pivot would be the right call.
+ OCCUPANCY DENOMINATOR
+   hoteles.cantidad_hab is the room inventory. MAX() inside the FILTER is an
+   aggregate-safe way to carry a constant dimension attribute through a GROUP BY
+   without adding it to the grouping key.
 
-OCCUPANCY DENOMINATOR:
-  hoteles.cantidad_hab is the room inventory. MAX() is used inside
-  the FILTER because the value is constant per hotel — it is an
-  aggregate-safe way to carry a dimension attribute through a
-  GROUP BY without adding it to the grouping key.
-
-EXCLUSIONS:
-  Three internal IDs are excluded: they are non-operating entities
-  rather than properties open to guests.
-================================================================
+ KNOWN LIMITATIONS, LEFT IN DELIBERATELY
+   - The excluded IDs are internal cost centres rather than properties open to
+     guests. A hoteles.es_operativo flag would be the dimension-driven version
+     of this filter, consistent with how room types are handled.
+   - CURRENT_DATE resolves in the database time zone. On a UTC instance the
+     report rolls over five hours early for a Lima audience;
+     (NOW() AT TIME ZONE 'America/Lima')::DATE fixes it.
+================================================================================
 */
 
 SELECT
     rd.fecha,
-
-    -- Property 41
-    SUM(rd.total)                    FILTER (WHERE r.hotel_id = 41) AS h41_ingresos,
-    COUNT(*)                         FILTER (WHERE r.hotel_id = 41) AS h41_ocupadas,
+    SUM(rd.total) FILTER (WHERE r.hotel_id = 41) AS h41_ingresos,
+    COUNT(*) FILTER (WHERE r.hotel_id = 41) AS h41_ocup,
     ROUND(
-        100.0 * COUNT(*) FILTER (WHERE r.hotel_id = 41)
-        / NULLIF(MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 41), 0), 2
-    ) AS h41_pct_ocupacion,
+        (
+            COUNT(*) FILTER (WHERE r.hotel_id = 41)
+        )::numeric * 100
+        /
+        MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 41),
+        2
+    ) AS h41_percentage_ocu,
 
-    -- Property 60
-    SUM(rd.total)                    FILTER (WHERE r.hotel_id = 60) AS h60_ingresos,
-    COUNT(*)                         FILTER (WHERE r.hotel_id = 60) AS h60_ocupadas,
-    ROUND(
-        100.0 * COUNT(*) FILTER (WHERE r.hotel_id = 60)
-        / NULLIF(MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 60), 0), 2
-    ) AS h60_pct_ocupacion,
 
-    -- Property 61
-    SUM(rd.total)                    FILTER (WHERE r.hotel_id = 61) AS h61_ingresos,
-    COUNT(*)                         FILTER (WHERE r.hotel_id = 61) AS h61_ocupadas,
+    SUM(rd.total) FILTER (WHERE r.hotel_id = 60) AS h60_ingresos,
+    COUNT(*) FILTER (WHERE r.hotel_id = 60) AS h60_ocup,
     ROUND(
-        100.0 * COUNT(*) FILTER (WHERE r.hotel_id = 61)
-        / NULLIF(MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 61), 0), 2
-    ) AS h61_pct_ocupacion,
+        (
+            COUNT(*) FILTER (WHERE r.hotel_id = 60)
+        )::numeric * 100
+        /
+        MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 60),
+        2
+    ) AS h60_percentage_ocu,
 
-    -- Property 64
-    SUM(rd.total)                    FILTER (WHERE r.hotel_id = 64) AS h64_ingresos,
-    COUNT(*)                         FILTER (WHERE r.hotel_id = 64) AS h64_ocupadas,
-    ROUND(
-        100.0 * COUNT(*) FILTER (WHERE r.hotel_id = 64)
-        / NULLIF(MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 64), 0), 2
-    ) AS h64_pct_ocupacion,
 
-    -- Property 69
-    SUM(rd.total)                    FILTER (WHERE r.hotel_id = 69) AS h69_ingresos,
-    COUNT(*)                         FILTER (WHERE r.hotel_id = 69) AS h69_ocupadas,
+    SUM(rd.total) FILTER (WHERE r.hotel_id = 61) AS h61_ingresos,
+    COUNT(*) FILTER (WHERE r.hotel_id = 61) AS h61_ocup,
     ROUND(
-        100.0 * COUNT(*) FILTER (WHERE r.hotel_id = 69)
-        / NULLIF(MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 69), 0), 2
-    ) AS h69_pct_ocupacion,
+        (
+            COUNT(*) FILTER (WHERE r.hotel_id = 61)
+        )::numeric * 100
+        /
+        MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 61),
+        2
+    ) AS h61_percentage_ocu,
 
-    -- Property 71
-    SUM(rd.total)                    FILTER (WHERE r.hotel_id = 71) AS h71_ingresos,
-    COUNT(*)                         FILTER (WHERE r.hotel_id = 71) AS h71_ocupadas,
+    SUM(rd.total) FILTER (WHERE r.hotel_id = 64) AS h64_ingresos,
+    COUNT(*) FILTER (WHERE r.hotel_id = 64) AS h64_ocup,
     ROUND(
-        100.0 * COUNT(*) FILTER (WHERE r.hotel_id = 71)
-        / NULLIF(MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 71), 0), 2
-    ) AS h71_pct_ocupacion,
+        (
+            COUNT(*) FILTER (WHERE r.hotel_id = 64)
+        )::numeric * 100
+        /
+        MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 64),
+        2
+    ) AS h64_percentage_ocu,
 
-    -- Property 86
-    SUM(rd.total)                    FILTER (WHERE r.hotel_id = 86) AS h86_ingresos,
-    COUNT(*)                         FILTER (WHERE r.hotel_id = 86) AS h86_ocupadas,
+    SUM(rd.total) FILTER (WHERE r.hotel_id = 69) AS h69_ingresos,
+    COUNT(*) FILTER (WHERE r.hotel_id = 69) AS h69_ocup,
     ROUND(
-        100.0 * COUNT(*) FILTER (WHERE r.hotel_id = 86)
-        / NULLIF(MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 86), 0), 2
-    ) AS h86_pct_ocupacion
+        (
+            COUNT(*) FILTER (WHERE r.hotel_id = 69)
+        )::numeric * 100
+        /
+        MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 69),
+        2
+    ) AS h69_percentage_ocu,
+
+    SUM(rd.total) FILTER (WHERE r.hotel_id = 71) AS h71_ingresos,
+    COUNT(*) FILTER (WHERE r.hotel_id = 71) AS h71_ocup,
+    ROUND(
+        (
+            COUNT(*) FILTER (WHERE r.hotel_id = 71)
+        )::numeric * 100
+        /
+        MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 71),
+        2
+    ) AS h71_percentage_ocu,
+
+    SUM(rd.total) FILTER (WHERE r.hotel_id = 86) AS h86_ingresos,
+    COUNT(*) FILTER (WHERE r.hotel_id = 86) AS h86_ocup,
+    ROUND(
+        (
+            COUNT(*) FILTER (WHERE r.hotel_id = 86)
+        )::numeric * 100
+        /
+        MAX(h.cantidad_hab) FILTER (WHERE r.hotel_id = 86),
+        2
+    ) AS h86_percentage_ocu
 
 FROM reservas r
 JOIN reservas_detalle rd
     ON r.id_reserva_origen = rd.id_reserva_origen
-   AND r.anio_creacion     = rd.anio_creacion
 JOIN hoteles h
     ON r.hotel_id = h.hotel_id
-JOIN dim_tipo_habitacion dth
-    ON dth.nombre_tipo = rd.tipo_habitacion
 WHERE r.hotel_id NOT IN (29, 999, 66)
-  AND dth.categoria = 'Habitacion'
-  AND NOT (r.estado_pago = 'No pagado' AND r.estado_reserva = 'Reservado')
-  AND rd.fecha >= DATE_TRUNC('month', CURRENT_DATE)
-  AND rd.fecha <  DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
+  AND EXTRACT(YEAR FROM rd.fecha) = EXTRACT(YEAR FROM CURRENT_DATE)
+  AND EXTRACT(MONTH FROM rd.fecha) = EXTRACT(MONTH FROM CURRENT_DATE)
 GROUP BY rd.fecha
 ORDER BY rd.fecha;
+   
+
+
+------------------------------------------------------------------------------------------------------------------------------
+--CONSOLIDADO GESTION INTEGRAL - VENTA CON CARPA;

@@ -1,73 +1,67 @@
 /*
-================================================================
-MULTI-YEAR REVENUE COMPARISON (2022–2026)
-================================================================
-AUTHOR: Victor Sernaque
+================================================================================
+ MULTI-YEAR REVENUE COMPARISON
+================================================================================
+ BUSINESS QUESTION
+   How does each property's performance in a given month compare against the
+   same month in prior years?
 
-BUSINESS QUESTION:
-  How does each property's performance in a given month compare
-  against the same month across the pryors years?
+ USE CASE
+   Board reporting and budget defence. Seasonality in this chain is pronounced,
+   so a month-over-month number is meaningless; like month against like month is
+   the only honest comparison.
 
-USE CASE:
-  Board reporting and budget defence. Seasonality in this chain is
-  pronounced, so a month-over-month number is meaningless.
+ TECHNIQUE
+   One conditional aggregate per year, producing a wide row per property. The
+   growth rate is NULLIF-guarded because a property that opened mid-series has a
+   zero prior-year base.
 
-TECHNIQUE:
-  One conditional aggregate per year via FILTER (WHERE), producing
-  a wide row per property. The year-over-year percentage compares the
-  two most recent years and is NULLIF-guarded, because properties
-  that opened mid-series have a zero prior-year base.
+ MEASUREMENT FRAME
+   Stay date. This is a revenue-realisation view, not a sales-attribution view.
 
-MEASUREMENT FRAME:
-  Stay date (rd.fecha), not booking date — this is a revenue
-  realisation view, not a sales attribution view.
+ FIX APPLIED
+   The join to reservas_detalle carried only id_reserva_origen. Because the
+   source recycles booking IDs annually, every recycled booking was
+   cross-multiplied against the detail rows of its namesakes in other years —
+   inflating exactly the year-over-year revenue this query exists to measure.
+   Now joins on the full composite key.
 
-PARAMETER:
-  The target month is hardcoded below. In production this runs from
-  the BI layer with the month passed as a parameter.
-================================================================
+ PARAMETER
+   The target month is hardcoded below. In production this runs from the BI
+   layer with the month passed as a parameter.
+================================================================================
 */
 
-SELECT
-    h.nombre AS hotel,
 
-    ROUND(SUM(rd.total) FILTER (WHERE rd."año" = 2022), 2) AS ingresos_2022,
-    COUNT(*)            FILTER (WHERE rd."año" = 2022)     AS noches_2022,
+    SUM(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2022 THEN rdh.total ELSE 0 END) AS sum_2022,
+    COUNT(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2022 THEN 1 END) AS count_2022,
 
-    ROUND(SUM(rd.total) FILTER (WHERE rd."año" = 2023), 2) AS ingresos_2023,
-    COUNT(*)            FILTER (WHERE rd."año" = 2023)     AS noches_2023,
+    SUM(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2023 THEN rdh.total ELSE 0 END) AS sum_2023,
+    COUNT(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2023 THEN 1 END) AS count_2023,
 
-    ROUND(SUM(rd.total) FILTER (WHERE rd."año" = 2024), 2) AS ingresos_2024,
-    COUNT(*)            FILTER (WHERE rd."año" = 2024)     AS noches_2024,
+    SUM(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2024 THEN rdh.total ELSE 0 END) AS sum_2024,
+    COUNT(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2024 THEN 1 END) AS count_2024,
 
-    ROUND(SUM(rd.total) FILTER (WHERE rd."año" = 2025), 2) AS ingresos_2025,
-    COUNT(*)            FILTER (WHERE rd."año" = 2025)     AS noches_2025,
+    SUM(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2025 THEN rdh.total ELSE 0 END) AS sum_2025,
+    COUNT(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2025 THEN 1 END) AS count_2025,
 
-    ROUND(SUM(rd.total) FILTER (WHERE rd."año" = 2026), 2) AS ingresos_2026,
-    COUNT(*)            FILTER (WHERE rd."año" = 2026)     AS noches_2026,
+    SUM(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2026 THEN rdh.total ELSE 0 END) AS sum_2026,
+    COUNT(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2026 THEN 1 END) AS count_2026,
 
-    -- Latest year vs prior year. NULL when the property had no
-    -- prior-year activity, which is the honest answer for a
-    -- property that opened mid-series.
-    ROUND(
-        100.0 * (
-            SUM(rd.total) FILTER (WHERE rd."año" = 2026)
-            - SUM(rd.total) FILTER (WHERE rd."año" = 2025)
-        ) / NULLIF(SUM(rd.total) FILTER (WHERE rd."año" = 2025), 0),
-        2
-    ) AS crecimiento_yoy_pct
+    ROUND((SUM(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2026 THEN rdh.total ELSE 0 END)
+     / 
+     nullif(
+        SUM(CASE WHEN EXTRACT(YEAR FROM rdh.fecha) = 2025 
+        THEN rdh.total ELSE 0 END)
+        ,0)
+        -1)*100,2) AS Comparativo_Yoy_perc
 
 FROM reservas r
-JOIN reservas_detalle rd
-    ON r.id_reserva_origen = rd.id_reserva_origen
-   AND r.anio_creacion     = rd.anio_creacion
-JOIN hoteles h
-    ON h.hotel_id = r.hotel_id
-JOIN dim_tipo_habitacion dth
-    ON dth.nombre_tipo = rd.tipo_habitacion
-WHERE rd."año" >= 2022
-  AND rd.mes = 6                    -- target month
-  AND dth.categoria = 'Habitacion'
-  AND NOT (r.estado_pago = 'No pagado' AND r.estado_reserva = 'Reservado')
-GROUP BY h.nombre
-ORDER BY ingresos_2026 DESC NULLS LAST;
+JOIN reservas_detalle rdh
+    ON  r.id_reserva_origen = rdh.id_reserva_origen
+    AND r.anio_creacion     = rdh.anio_creacion
+WHERE EXTRACT(YEAR FROM rdh.fecha) >= 2022
+  and not (r.estado_pago = 'No pagado' and r.estado_reserva = 'Reservado')
+  AND EXTRACT(MONTH FROM rdh.fecha) = 6
+GROUP BY r.hotel_id
+ORDER BY r.hotel_id;
